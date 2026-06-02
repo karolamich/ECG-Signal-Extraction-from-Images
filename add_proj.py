@@ -1,73 +1,43 @@
 import cv2
 import numpy as np
 
-# WCZYTANIE OBRAZÓW
-# img_test = cv2.imread('../img/P3_1.JPG')
-img_test = cv2.imread('../img/P5_1.JPG')
-img_test = cv2.resize(img_test, None, fx=0.8, fy=0.8, interpolation=cv2.INTER_AREA)
+img_test = cv2.imread('../img/P3_1.JPG')
+# img_test = cv2.resize(img_test, None, fx=0.6, fy=0.6, interpolation=cv2.INTER_AREA)
 # cv2.imshow('Image test', img_test) 
 
-img_ref = cv2.imread('../img/P3_3.JPG')
-img_ref = cv2.resize(img_ref, None, fx=0.8, fy=0.8, interpolation=cv2.INTER_AREA)
-# cv2.imshow('Image ref', img_ref) 
+def get_chart_roi_v1(img):
+    img_copy = img.copy()
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    # cv2.imshow('image1', img)
+    _, img_thr = cv2.threshold(img, 5, 255, cv2.THRESH_BINARY)
+    # cv2.imshow('img_thr', img_thr)
 
-# ------------PRZELICZANIE DLUGOSCI REFERENCYJNEJ OSI X-----------
+    kernel = np.ones((6, 6), np.uint8)
+    morph = cv2.morphologyEx(img_thr, cv2.MORPH_ERODE, kernel)
+    # cv2.imshow('MORPH_ERODE', morph)
 
-def get_ref_len_axis_x(img):
-    tolerance_angle = 5
-    img_ref = img
-    img_ref_gray = cv2.cvtColor(img_ref, cv2.COLOR_BGR2GRAY)
-    # cv2.imshow('Image ref gray', img_ref_gray)
+    kernel1 = np.ones((3, 3), np.uint8)
+    morph1 = cv2.morphologyEx(morph, cv2.MORPH_DILATE, kernel1)
+    # cv2.imshow('MORPH_DILATE', morph1)
 
-    # img_ref_adaptiv_thr = cv2.adaptiveThreshold(img_ref_gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
-    _, img_ref_thr = cv2.threshold(img_ref_gray, 80, 255, cv2.THRESH_BINARY)
-    # cv2.imshow('Image ref gray threshold', img_ref_thr)
+    kernel2 = np.ones((7, 7), np.uint8)
+    morph2 = cv2.morphologyEx(morph1, cv2.MORPH_CLOSE, kernel2)
+    # cv2.imshow('MORPH_CLOSE', morph2)
 
-    # kernel = np.ones((5, 5), np.uint8)
-    # morph = cv2.erode(img_ref_thr,kernel,iterations = 1)
-    # cv2.imshow('Image morph', morph)
+    contours, _ = cv2.findContours(morph2, mode=cv2.RETR_TREE, method=cv2.CHAIN_APPROX_NONE)
 
-    width = img_ref.shape[1]
-    width_low = int(0.4*width)
-    width_up = int(0.6*width)
+    image_with_contours = img_copy.copy()
+    # cv2.drawContours(image=image_with_contours, contours=contours, contourIdx=-1, color=(0, 255, 0), thickness=1, lineType=cv2.LINE_4)
+    # cv2.imshow('image_with_contours', image_with_contours)
+    
+    sorted_list = sorted(contours, key=cv2.contourArea)
+    largest_contour = sorted_list[-2]
 
-    roi = img_ref_gray[:, width_low: width_up]
-    # cv2.imshow('ROI', roi)
-    edges = cv2.Canny(roi,50,150,apertureSize=3)
-    vertical_lines =[]
-    lines = cv2.HoughLinesP(
-                edges, # Input edge image
-                1, # Distance resolution in pixels
-                np.pi/180, # Angle resolution in radians
-                threshold=200, # Min number of votes for valid line
-                minLineLength=600, # Min allowed length of line
-                maxLineGap=5 # Max allowed gap between line for joining them
-                )
-    print(len(lines))
-    x_list = []
-    for points in lines:
-        x1,y1,x2,y2=points[0]
-        # print(x1, y1, x2, y2)
+    x, y, w, h = cv2.boundingRect(largest_contour)
+    cropped_img = img_copy[y:y+h, x:x+w]
+    cv2.imshow('cropped_img', cropped_img)
 
-        angle_rad = np.arctan2(y2-y1, x2-x1)
-        angle_deg = np.degrees(angle_rad)
-        print(angle_deg)
-        if abs(abs(angle_deg)-90) <= tolerance_angle:
-            rand_col = (np.random.randint(0, 255), np.random.randint(0, 255), np.random.randint(0, 255))
-            cv2.line(img_ref,(width_low+x1,y1),(width_low+x2,y2),rand_col,1)
-            x_list.append(x1)
-            vertical_lines.append([(x1,y1),(x2,y2)])
-
-    x_list.sort()
-    x_min = np.mean(x_list[:2])
-    x_max = np.mean(x_list[-2:])
-
-    print(x_min, x_max)
-    ref_len_in_pixel = x_max - x_min
-    print(ref_len_in_pixel)
-    # cv2.imshow('Detected lines',img_ref)
-
-    return ref_len_in_pixel
+    return cropped_img, (x, y, w, h)
 
 def get_chart_roi(img):
     img_copy = img.copy()
@@ -202,57 +172,13 @@ def get_reference_lines(img):
     # cv2.imshow('Image with lines', ref_lines_copy)
     return ref_lines
 
-def find_white_points(img, img_mod, ref_pt, w):
-    i = 1
-    # print(img.shape[0])
-    while True:
-        if ref_pt > 0 and ref_pt <= img.shape[0]-1:
-            ref_pt = np.clip(ref_pt, 0, img.shape[0]-1)
-            print(ref_pt, w)
-            if  ref_pt+i <= img.shape[0]-1 and img[ref_pt+i, w] == 255 and ref_pt+i < img.shape[0]:
-                img_mod[ref_pt+1, w] = (0, 0, 255)
-                ref_pt += i
-                break
-            elif img[ref_pt, w] == 255:
-                img_mod[ref_pt, w] = (0, 0, 255)
-                break
-            elif img[ref_pt-i, w] == 255:
-                img_mod[ref_pt-i, w] = (0, 0, 255)
-                ref_pt -= i
-                break
-            else:
-                i += 1
 
-    return ref_pt, img_mod
 
-def find_points(img, ref_lines, names):
-    points = {}
-    img_copy = img.copy()
-    img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    _, img_thr = cv2.threshold(img_gray, 80, 255, cv2.THRESH_BINARY)
-    # cv2.imshow('Image gray threshold', img_thr)
-    print(img_thr.shape)
+# get_chart_roi(img_test)
 
-    img_copy = cv2.cvtColor(img_thr, cv2.COLOR_GRAY2BGR)
-    for y_ref in ref_lines:
-        chart_data = []
-        ref_pt = y_ref
-        # cv2.line(img_copy, (0, y_ref), (img_thr.shape[1], y_ref), (255, 0, 0), 1)
-        for w in range(img_thr.shape[1]-1):
-            ref_pt, img_copy = find_white_points(img_thr, img_copy, ref_pt, w)
-        
-    cv2.imshow('Image with points', img_copy)
-            
+img_cropped, _ = get_chart_roi(img_test)
 
-ref_lines_names = ['I', 'II', 'III', 'aVR', 'aVL', 'aVF', 'V1', 'V2', 'V3', 'V4', 'V5', 'V6']
-# ref_scale = get_ref_len_axis_x(img_ref)
-
-img_cropped, (x, y, w, h) = get_chart_roi(img_test)
-ref_lines = get_reference_lines(img_cropped)
-
-final_img = img_cropped.copy()
-find_points(img_cropped, ref_lines, ref_lines_names)
-
+get_reference_lines(img_cropped)
 
 cv2.waitKey(0)
 cv2.destroyAllWindows()
