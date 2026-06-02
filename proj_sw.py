@@ -1,19 +1,21 @@
 import cv2
 import numpy as np
+from scipy.interpolate import interp1d
+import pandas as pd
 
 # WCZYTANIE OBRAZÓW
 # img_test = cv2.imread('../img/P3_1.JPG')
 img_test = cv2.imread('../img/P5_1.JPG')
-img_test = cv2.resize(img_test, None, fx=0.8, fy=0.8, interpolation=cv2.INTER_AREA)
+# img_test = cv2.resize(img_test, None, fx=0.8, fy=0.8, interpolation=cv2.INTER_AREA)
 # cv2.imshow('Image test', img_test) 
 
 img_ref = cv2.imread('../img/P3_3.JPG')
-img_ref = cv2.resize(img_ref, None, fx=0.8, fy=0.8, interpolation=cv2.INTER_AREA)
+# img_ref = cv2.resize(img_ref, None, fx=0.8, fy=0.8, interpolation=cv2.INTER_AREA)
 # cv2.imshow('Image ref', img_ref) 
 
 # ------------PRZELICZANIE DLUGOSCI REFERENCYJNEJ OSI X-----------
 
-def get_ref_len_axis_x(img):
+def get_ref_scale_in_pixel(img):
     tolerance_angle = 5
     img_ref = img
     img_ref_gray = cv2.cvtColor(img_ref, cv2.COLOR_BGR2GRAY)
@@ -43,7 +45,7 @@ def get_ref_len_axis_x(img):
                 minLineLength=600, # Min allowed length of line
                 maxLineGap=5 # Max allowed gap between line for joining them
                 )
-    print(len(lines))
+    # print(len(lines))
     x_list = []
     for points in lines:
         x1,y1,x2,y2=points[0]
@@ -51,7 +53,7 @@ def get_ref_len_axis_x(img):
 
         angle_rad = np.arctan2(y2-y1, x2-x1)
         angle_deg = np.degrees(angle_rad)
-        print(angle_deg)
+        # print(angle_deg)
         if abs(abs(angle_deg)-90) <= tolerance_angle:
             rand_col = (np.random.randint(0, 255), np.random.randint(0, 255), np.random.randint(0, 255))
             cv2.line(img_ref,(width_low+x1,y1),(width_low+x2,y2),rand_col,1)
@@ -62,12 +64,12 @@ def get_ref_len_axis_x(img):
     x_min = np.mean(x_list[:2])
     x_max = np.mean(x_list[-2:])
 
-    print(x_min, x_max)
+    # print(x_min, x_max)
     ref_len_in_pixel = x_max - x_min
-    print(ref_len_in_pixel)
+    # print(ref_len_in_pixel)
     # cv2.imshow('Detected lines',img_ref)
 
-    return ref_len_in_pixel
+    return int(ref_len_in_pixel)
 
 def get_chart_roi(img):
     img_copy = img.copy()
@@ -208,9 +210,9 @@ def find_white_points(img, img_mod, ref_pt, w):
     while True:
         if ref_pt > 0 and ref_pt <= img.shape[0]-1:
             ref_pt = np.clip(ref_pt, 0, img.shape[0]-1)
-            print(ref_pt, w)
+            # print(ref_pt, w)
             if  ref_pt+i <= img.shape[0]-1 and img[ref_pt+i, w] == 255 and ref_pt+i < img.shape[0]:
-                img_mod[ref_pt+1, w] = (0, 0, 255)
+                img_mod[ref_pt+i, w] = (0, 0, 255)
                 ref_pt += i
                 break
             elif img[ref_pt, w] == 255:
@@ -225,33 +227,73 @@ def find_white_points(img, img_mod, ref_pt, w):
 
     return ref_pt, img_mod
 
-def find_points(img, ref_lines, names):
+def find_points(img, ref_lines):
     points = {}
     img_copy = img.copy()
     img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     _, img_thr = cv2.threshold(img_gray, 80, 255, cv2.THRESH_BINARY)
     # cv2.imshow('Image gray threshold', img_thr)
-    print(img_thr.shape)
+    # print(img_thr.shape)
 
     img_copy = cv2.cvtColor(img_thr, cv2.COLOR_GRAY2BGR)
+    idx = 1
     for y_ref in ref_lines:
         chart_data = []
         ref_pt = y_ref
         # cv2.line(img_copy, (0, y_ref), (img_thr.shape[1], y_ref), (255, 0, 0), 1)
         for w in range(img_thr.shape[1]-1):
             ref_pt, img_copy = find_white_points(img_thr, img_copy, ref_pt, w)
-        
-    cv2.imshow('Image with points', img_copy)
+            chart_data.append(ref_pt)
+        points[idx] = chart_data
+        idx += 1
+
+    # print(len(points))
+    # cv2.imshow('Image with points', img_copy)
+    return points
             
+def get_data(ref_len_in_pixel, data_lines, ref_lines, ref_lines_names):
+    time_scale = 200/ref_len_in_pixel
+    # print(time_scale)
+    num_pixels = len(data_lines[1])
+
+    time_raw_ms = np.arange(num_pixels) * time_scale
+    max_time_ms = time_raw_ms[-1]
+
+    time_scale_ms = np.arange(0.0, max_time_ms + 1.0, 1.0)
+
+    final_data = {'time_ms': time_scale_ms}
+
+    for key, list_data in data_lines.items():
+        lead_name = ref_lines_names[key-1]
+        
+        y_raw = np.array(list_data)
+        y_normalized = ref_lines[key-1] - y_raw
+        
+        interpolator = interp1d(time_raw_ms, y_normalized, kind='linear', fill_value="extrapolate")
+        
+        y_interpolated = interpolator(time_scale_ms)
+        
+        final_data[lead_name] = y_interpolated
+
+    df = pd.DataFrame(final_data)
+    df = df.round().astype(int)
+    print(df.head(60))
+
+    
 
 ref_lines_names = ['I', 'II', 'III', 'aVR', 'aVL', 'aVF', 'V1', 'V2', 'V3', 'V4', 'V5', 'V6']
-# ref_scale = get_ref_len_axis_x(img_ref)
+ref_scale = get_ref_scale_in_pixel(img_ref)
+# print(ref_scale)
 
 img_cropped, (x, y, w, h) = get_chart_roi(img_test)
 ref_lines = get_reference_lines(img_cropped)
 
 final_img = img_cropped.copy()
-find_points(img_cropped, ref_lines, ref_lines_names)
+data_lines = find_points(img_cropped, ref_lines)
+
+get_data(ref_scale, data_lines, ref_lines, ref_lines_names)
+
+
 
 
 cv2.waitKey(0)
