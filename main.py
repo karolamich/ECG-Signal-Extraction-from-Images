@@ -14,7 +14,7 @@ def main():
     os.makedirs(args.output_dir, exist_ok=True)
 
     if args.mode == 'basic':
-        print("Wersji podsatwowa")
+        print("Wersji podstawowa")
         run_basic_version(args.input_dir, args.output_dir)
         
     elif args.mode == 'scan':

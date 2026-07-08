@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 from scipy.interpolate import interp1d
+from scipy.signal import find_peaks
 import pandas as pd
 import matplotlib.pyplot as plt
 import glob
@@ -189,7 +190,10 @@ def find_white_points(img, img_mod, ref_pt, w):
                 break
             else:
                 i += 1
-
+                if i > img.shape[0]:
+                    img_mod[ref_pt, w] = (0, 0, 255)
+                    return ref_pt, img_mod
+                
     return ref_pt, img_mod
 
 def find_points(img, ref_lines):
@@ -256,36 +260,70 @@ def plot_signals(df, ref_lines_names):
     
     plt.show()
 
+def compute_bpm(df, lead='II', ms_per_sample=1.0):
+    if lead not in df.columns:
+        lead = df.columns[1]
+ 
+    signal = df[lead].values.astype(float)
+    sig_range = signal.max() - signal.min()
+    if sig_range == 0:
+        return None
+ 
+    sig_norm = (signal - signal.mean()) / sig_range
+    min_distance = int(300 / ms_per_sample)
+ 
+    peaks, _ = find_peaks(sig_norm, height=0.2, distance=min_distance)
+ 
+    if len(peaks) < 2:
+        return None
+ 
+    mean_rr = np.mean(np.diff(peaks)) * ms_per_sample
+    return round(60000.0 / mean_rr, 1)
+
+def process_basic_image(img_path, ref_scale, output_dir):
+    ref_lines_names = ['I', 'II', 'III', 'aVR', 'aVL', 'aVF', 'V1', 'V2', 'V3', 'V4', 'V5', 'V6']
+    filename = os.path.basename(img_path)
+    
+    img_test = cv2.imread(img_path)
+    if img_test is None:
+        print(f"BŁĄD: Nie można wczytać {filename}")
+        return None, None
+
+    img_cropped, _ = get_chart_roi(img_test)
+    ref_lines = get_reference_lines(img_cropped)
+    if len(ref_lines) < 1:
+        print(f"BŁĄD: Brak linii bazowych w {filename}")
+        return None, None
+
+    data_lines = find_points(img_cropped, ref_lines)
+    df = get_data(ref_scale, data_lines, ref_lines, ref_lines_names)
+    # plot_signals(df, ref_lines_names)
+
+    bpm = compute_bpm(df)
+
+    return df, bpm
+
 def run_basic_version(input_dir, output_dir):
     ref_paths = glob.glob(os.path.join(input_dir, '*3_3.JPG'))
     img_ref = cv2.imread(ref_paths[0]) if ref_paths else None
     if img_ref is None:
-        print(f'BŁĄD: W folderze {ref_paths[0]} nie ma pliku referencyjnego P3_3.JPG')
+        print(f'BŁĄD: Nie znaleziono pliku referencyjnego P3_3.JPG')
+        return
     ref_scale = get_ref_scale_in_pixel(img_ref)
-    
-    ref_lines_names = ['I', 'II', 'III', 'aVR', 'aVL', 'aVF', 'V1', 'V2', 'V3', 'V4', 'V5', 'V6']
+
     image_files = glob.glob(os.path.join(input_dir, '*.[jJ][pP][gG]'))
-    
+
     for img_path in image_files:
         if '3_3.JPG' in img_path:
             continue
-            
+
         filename = os.path.basename(img_path)
-        img_test = cv2.imread(img_path)
-        if img_test is None: continue
 
         try:
-            img_cropped, _ = get_chart_roi(img_test)
-            ref_lines = get_reference_lines(img_cropped)
-            if len(ref_lines) < 1: continue
-                
-            data_lines = find_points(img_cropped, ref_lines)
-            df_signals = get_data(ref_scale, data_lines, ref_lines, ref_lines_names)
-            
+            df, _ = process_basic_image(img_path, ref_scale, output_dir)
             csv_path = os.path.join(output_dir, os.path.splitext(filename)[0] + '.csv')
-            df_signals.to_csv(csv_path, index=False)
-            print(f"Przetworzono (Basic): {filename}")
-            # plot_signals(df_signals, ref_lines_names)
-            
+            df.to_csv(csv_path, index=False)
+            print(f'Zapisano dane dla {filename} do pliku CSV: {csv_path}')
+
         except Exception as e:
             print(f"Błąd dla {filename}: {e}")
